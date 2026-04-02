@@ -8,10 +8,12 @@ Check all credit balances for Katana routing permutations.
 Usage: uv run check_credits.py
 """
 
+import time
+
 from web3 import Web3
 import json
 
-ETH_RPC = "https://eth.llamarpc.com"
+ETH_RPC = "https://ethereum-rpc.publicnode.com"
 KATANA_RPC = "https://rpc.katana.network"
 
 w3_eth = Web3(Web3.HTTPProvider(ETH_RPC))
@@ -62,7 +64,7 @@ TOKEN_SPOKES = {
     "ETH": ["Base", "Arbitrum", "Optimism", "Mantle", "Gnosis"],
 }
 
-# --- Katana OFT Adapters ---
+# --- Katana OFT Adapters (NonDefaultMintBurnOftAdapter) ---
 KATANA_ADAPTERS = {
     "vbUSDT": {
         "address": "0x4690f346337ed8737bea462ac71ff16ef95b985e",
@@ -82,25 +84,7 @@ KATANA_ADAPTERS = {
     },
 }
 
-# --- Ethereum VaultOFTs ---
-ETH_VAULT_OFTS = {
-    "USDC-VaultOFT": {
-        "address": "0xb5bADA33542a05395d504a25885e02503A957Bb3",
-        "decimals": 6,
-    },
-    "USDT-VaultOFT": {
-        "address": "0x839dC0cFF5e263F56C9810560adF8Ea40E95Ab82",
-        "decimals": 6,
-    },
-    "WETH-VaultOFT": {
-        "address": "0x8F45F7ACD4b9FC0B446902790F304d444dfF949b",
-        "decimals": 18,
-    },
-    "WBTC-VaultOFT": {
-        "address": "0x8d09c41229f07ad098ffb5fad239dd87d2c131d4",
-        "decimals": 8,
-    },
-}
+RATE_LIMIT_DELAY = 0.3  # seconds between Ethereum RPC calls
 
 
 def format_amount(raw: int, decimals: int) -> str:
@@ -149,6 +133,7 @@ def check_path_credits():
                 )
             except Exception as e:
                 print(f"  -> {spoke:12s} (eid {eid}): ERROR - {e}")
+            time.sleep(RATE_LIMIT_DELAY)
 
 
 def check_katana_adapter_balances():
@@ -173,33 +158,10 @@ def check_katana_adapter_balances():
             print(f"  {token:8s} ({info['address']}): N/A ({e})")
 
 
-def check_eth_vaultoft_balances():
-    print("\n" + "=" * 70)
-    print("VAULTOFT secondaryChainBalance (Ethereum)")
-    print("Outbound credit for Spoke->Katana and Eth->Katana routes")
-    print("=" * 70)
-
-    for token, info in ETH_VAULT_OFTS.items():
-        contract = w3_eth.eth.contract(
-            address=Web3.to_checksum_address(info["address"]),
-            abi=SECONDARY_BALANCE_ABI,
-        )
-        try:
-            balance = contract.functions.secondaryChainBalance().call()
-            human = format_amount(balance, info["decimals"])
-            status = status_icon(balance, info["decimals"])
-            print(
-                f"  {token:16s} ({info['address']}): {balance:>30d}  ({human:>14s})  [{status}]"
-            )
-        except Exception as e:
-            print(f"  {token:16s} ({info['address']}): N/A ({e})")
-
-
 if __name__ == "__main__":
     print("Checking all credit balances for Katana routing...\n")
     check_path_credits()
     check_katana_adapter_balances()
-    check_eth_vaultoft_balances()
     print("\n" + "=" * 70)
     print("Done. Forward empty/low balances to adapter owner for replenishment.")
     print("Adapter owner: 0x619D553686958A873A62B336b2DD97C3b25134EA")

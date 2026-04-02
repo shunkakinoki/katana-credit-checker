@@ -9,6 +9,7 @@ Usage: uv run check_credits.py
 """
 
 import time
+import urllib.request
 
 from web3 import Web3
 import json
@@ -69,22 +70,55 @@ KATANA_ADAPTERS = {
     "vbUSDT": {
         "address": "0x4690f346337ed8737bea462ac71ff16ef95b985e",
         "decimals": 6,
+        "token": "USDT",
     },
     "vbUSDC": {
         "address": "0x807275727Dd3E640c5F2b5DE7d1eC72B4Dd293C0",
         "decimals": 6,
+        "token": "USDC",
     },
     "vbWETH": {
         "address": "0x694d1697f6909361775139357d99fb60b5cab683",
         "decimals": 18,
+        "token": "WETH",
     },
     "vbWBTC": {
         "address": "0x8169e532bc781985e155037db1f96c267a520dfc",
         "decimals": 8,
+        "token": "WBTC",
     },
 }
 
 RATE_LIMIT_DELAY = 0.3  # seconds between Ethereum RPC calls
+
+# USD price per unit for threshold comparison
+# ETH: fetched at runtime; stablecoins: 1:1; BTC: fetched at runtime
+TOKEN_USD_PRICE: dict[str, float] = {
+    "USDT": 1.0,
+    "USDC": 1.0,
+}
+
+
+def fetch_prices():
+    """Fetch ETH and BTC prices from CoinGecko."""
+    try:
+        url = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,bitcoin&vs_currencies=usd"
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            TOKEN_USD_PRICE["ETH"] = data["ethereum"]["usd"]
+            TOKEN_USD_PRICE["WETH"] = data["ethereum"]["usd"]
+            TOKEN_USD_PRICE["BTC"] = data["bitcoin"]["usd"]
+            TOKEN_USD_PRICE["WBTC"] = data["bitcoin"]["usd"]
+            print(f"ETH price: ${TOKEN_USD_PRICE['ETH']:,.0f}  |  BTC price: ${TOKEN_USD_PRICE['BTC']:,.0f}\n")
+    except Exception as e:
+        print(f"Warning: Could not fetch prices ({e}), using fallback ETH=$2000 BTC=$60000\n")
+        TOKEN_USD_PRICE.update({"ETH": 2000, "WETH": 2000, "BTC": 60000, "WBTC": 60000})
+
+
+def to_usd(human_amount: float, token: str) -> float:
+    """Convert a human-readable token amount to USD."""
+    return human_amount * TOKEN_USD_PRICE.get(token, 1.0)
 
 
 def format_amount(raw: int, decimals: int) -> str:
@@ -99,11 +133,14 @@ def format_amount(raw: int, decimals: int) -> str:
         return f"{human:.6f}"
 
 
-def status_icon(raw: int, decimals: int) -> str:
+def status_label(raw: int, decimals: int, token: str) -> str:
     human = raw / (10**decimals)
+    usd = to_usd(human, token)
     if raw == 0:
         return "EMPTY"
-    elif human < 100:
+    elif usd < 10_000:
+        return "VERY LOW"
+    elif usd < 100_000:
         return "LOW"
     else:
         return "OK"
@@ -127,7 +164,7 @@ def check_path_credits():
             try:
                 credit = contract.functions.paths(eid).call()
                 human = format_amount(credit, pool_info["sd"])
-                status = status_icon(credit, pool_info["sd"])
+                status = status_label(credit, pool_info["sd"], token)
                 print(
                     f"  -> {spoke:12s} (eid {eid}): {credit:>20d}  ({human:>14s})  [{status}]"
                 )
@@ -150,7 +187,7 @@ def check_katana_adapter_balances():
         try:
             balance = contract.functions.secondaryChainBalance().call()
             human = format_amount(balance, info["decimals"])
-            status = status_icon(balance, info["decimals"])
+            status = status_label(balance, info["decimals"], info["token"])
             print(
                 f"  {token:8s} ({info['address']}): {balance:>30d}  ({human:>14s})  [{status}]"
             )
@@ -160,6 +197,7 @@ def check_katana_adapter_balances():
 
 if __name__ == "__main__":
     print("Checking all credit balances for Katana routing...\n")
+    fetch_prices()
     check_path_credits()
     check_katana_adapter_balances()
     print("\n" + "=" * 70)
